@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baltimore Urban Safety, Infrastructure & Shelter Planner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        baltimore: {
+                            yellow: '#FFC82E',
+                            black: '#000000',
+                            red: '#D0103A',
+                            dark: '#0f172a',
+                            card: '#1e293b'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Leaflet MarkerCluster -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; overflow: hidden; }
+        #map { width: 100%; height: 100vh; z-index: 0; background: #0b0f19; }
+
+        @keyframes pulse-critical {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8); }
+            70% { transform: scale(1.15); box-shadow: 0 0 0 14px rgba(239, 68, 68, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .marker-pulse-critical { animation: pulse-critical 1.8s infinite; border-radius: 50%; }
+
+        @keyframes pulse-shelter {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.8); }
+            70% { transform: scale(1.15); box-shadow: 0 0 0 14px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        .marker-pulse-shelter { animation: pulse-shelter 2s infinite; border-radius: 50%; }
+
+        @keyframes pulse-building {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.8); }
+            70% { transform: scale(1.15); box-shadow: 0 0 0 14px rgba(168, 85, 247, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+        }
+        .marker-pulse-building { animation: pulse-building 2.2s infinite; border-radius: 50%; }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        @keyframes pulse-food {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.8); }
+            70% { transform: scale(1.15); box-shadow: 0 0 0 14px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+        .marker-pulse-food { animation: pulse-food 2.1s infinite; border-radius: 50%; }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+        ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.5); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.8); }
+
+        .leaflet-popup-content-wrapper {
+            background: #1e293b !important;
+            color: #f8fafc !important;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 0.75rem !important;
+            padding: 0px !important;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.6) !important;
+        }
+        .leaflet-popup-content { margin: 0 !important; width: 300px !important; }
+        .leaflet-popup-tip { background: #1e293b !important; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-screen w-screen relative select-none">
+
+    <!-- Top Navigation Bar -->
+    <header class="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-3 glass-panel border-b border-slate-700/60">
+        <div class="flex items-center space-x-3">
+            <div class="bg-gradient-to-tr from-amber-500 via-purple-600 to-red-600 p-2.5 rounded-xl text-black font-extrabold shadow-lg flex items-center justify-center">
+                <i class="fa-solid fa-city text-lg text-white"></i>
+            </div>
+            <div>
+                <h1 class="text-base font-bold text-white leading-tight flex items-center gap-2">
+                    Baltimore Urban Safety, Infrastructure & Shelter Planner
+                    <span id="liveBadge" class="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-normal hidden sm:inline-block">
+                        Open311, NIBRS & Food Security Active
+                    </span>
+                </h1>
+                <p class="text-xs text-slate-400 hidden sm:block">Data-Driven Crime Interventions, Sidewalk Infrastructure, Food Deserts & Shelter Placement</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2 sm:space-x-3">
+            
+            <button onclick="fetchLive311Data()" class="bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5" title="Fetch Live Data from Open Baltimore REST API">
+                <i id="syncSpinner" class="fa-solid fa-arrows-rotate"></i>
+                <span class="hidden md:inline">Sync Open311</span>
+            </button>
+            <button onclick="runFoodSecurityAnalysis()" class="bg-gradient-to-r from-lime-500 to-emerald-600 hover:from-lime-400 hover:to-emerald-500 text-slate-950 font-extrabold px-3 py-2 rounded-lg text-xs transition shadow-lg flex items-center gap-1.5" title="Analyze 5-7 Mile Food Desert Radii">
+                <i class="fa-solid fa-basket-shopping text-sm"></i>
+                <span class="hidden md:inline">Scan 5-7mi Food Deserts</span>
+            </button>
+            <button id="addFlagBtn" onclick="toggleAddFlagMode()" class="bg-gradient-to-r from-amber-500 to-red-600 hover:from-amber-400 hover:to-red-500 text-slate-950 font-bold px-3 py-2 rounded-lg text-xs transition shadow-lg flex items-center gap-1.5">
+                <i class="fa-solid fa-plus-circle text-sm"></i>
+                <span class="hidden md:inline">Drop Flag</span>
+            </button>
+
+            <!-- Unified Sidebar & Tab Navigation Shortcuts -->
+            <div class="h-6 w-[1px] bg-slate-700/80 mx-1 hidden sm:block"></div>
+
+            <div class="flex bg-slate-900/90 p-1 rounded-xl border border-slate-700/80 items-center space-x-2">
+                <!-- Sidewalks & Infrastructure Layer Toggle & Tab -->
+                <div class="relative flex items-center">
+                    <button id="navBtnInfra" onclick="openTab('flags')" class="px-2.5 py-1.5 hover:bg-slate-800 text-amber-400 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 relative" title="View Sidewalks & Infrastructure Flags">
+                        <i class="fa-solid fa-person-walking-with-cane"></i>
+                        <span id="badgeCount" class="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] px-1.5 py-0.2 rounded-full font-bold">0</span>
+                    </button>
+                    <button id="checkBtnInfra" onclick="toggleSection('infrastructure')" class="absolute -top-1.5 -right-1.5 bg-amber-500 text-slate-950 hover:bg-amber-400 rounded-full w-4 h-4 text-[9px] flex items-center justify-center font-black shadow-md border border-slate-900 transition-all" title="Toggle Sidewalks Layer visibility on map">
+                        <i id="checkInfra" class="fa-solid fa-check"></i>
+                    </button>
+                </div>
+
+                <!-- Safety & Crime Buildings Layer Toggle & Tab -->
+                <div class="relative flex items-center">
+                    <button id="navBtnSafety" onclick="openTab('crime')" class="px-2.5 py-1.5 hover:bg-slate-800 text-purple-400 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 relative" title="Suggested Safety Buildings">
+                        <i class="fa-solid fa-building-shield"></i>
+                        <span id="buildingBadge" class="bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] px-1.5 py-0.2 rounded-full font-bold">0</span>
+                    </button>
+                    <button id="checkBtnSafety" onclick="toggleSection('safety')" class="absolute -top-1.5 -right-1.5 bg-purple-500 text-white hover:bg-purple-400 rounded-full w-4 h-4 text-[9px] flex items-center justify-center font-black shadow-md border border-slate-900 transition-all" title="Toggle Safety Layer visibility on map">
+                        <i id="checkSafety" class="fa-solid fa-check"></i>
+                    </button>
+                </div>
+
+                <!-- Homeless Shelters Layer Toggle & Tab -->
+                <div class="relative flex items-center">
+                    <button id="navBtnShelter" onclick="openTab('shelter')" class="px-2.5 py-1.5 hover:bg-slate-800 text-emerald-400 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 relative" title="Suggested Homeless Shelters">
+                        <i class="fa-solid fa-house-chimney-medical"></i>
+                        <span id="shelterBadge" class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] px-1.5 py-0.2 rounded-full font-bold">0</span>
+                    </button>
+                    <button id="checkBtnShelter" onclick="toggleSection('shelter')" class="absolute -top-1.5 -right-1.5 bg-emerald-500 text-slate-950 hover:bg-emerald-400 rounded-full w-4 h-4 text-[9px] flex items-center justify-center font-black shadow-md border border-slate-900 transition-all" title="Toggle Shelters Layer visibility on map">
+                        <i id="checkShelter" class="fa-solid fa-check"></i>
+                    </button>
+                </div>
+
+                <!-- Food Resources & Pantries Layer Toggle & Tab -->
+                <div class="relative flex items-center">
+                    <button id="navBtnFood" onclick="openTab('food')" class="px-2.5 py-1.5 hover:bg-slate-800 text-lime-400 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 relative" title="Food Resources & Food Pantry Suggestions">
+                        <i class="fa-solid fa-apple-whole"></i>
+                        <span id="foodBadge" class="bg-lime-500/20 text-lime-300 border border-lime-500/30 text-[10px] px-1.5 py-0.2 rounded-full font-bold">0</span>
+                    </button>
+                    <button id="checkBtnFood" onclick="toggleSection('food')" class="absolute -top-1.5 -right-1.5 bg-lime-500 text-slate-950 hover:bg-lime-400 rounded-full w-4 h-4 text-[9px] flex items-center justify-center font-black shadow-md border border-slate-900 transition-all" title="Toggle Food Security Layer visibility on map">
+                        <i id="checkFood" class="fa-solid fa-check"></i>
+                    </button>
+                </div>
+
+                <!-- Grant Proposals -->
+                <button onclick="openTab('proposals')" class="px-2.5 py-1.5 hover:bg-slate-800 text-amber-300 rounded-lg text-xs font-semibold transition flex items-center gap-1.5" title="Grant & Capital Proposals">
+                    <i class="fa-solid fa-file-contract"></i>
+                </button>
+            </div>
+
+            <button onclick="toggleDashboard()" class="p-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition" title="Analytics Dashboard">
+                <i class="fa-solid fa-chart-pie"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Map Container -->
+    <div id="map"></div>
+
+    <!-- Drop Flag Mode Banner -->
+    <div id="dropModeBanner" class="hidden absolute top-20 left-1/2 -translate-x-1/2 z-20 glass-panel border border-amber-500/50 text-amber-300 px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 animate-bounce">
+        <i class="fa-solid fa-crosshairs text-amber-400"></i>
+        <span class="font-bold text-xs">Click anywhere on the map to place a new flag / proposal</span>
+        <button onclick="toggleAddFlagMode()" class="text-amber-400 hover:text-white ml-2"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <!-- Map Controls & Layer Panel -->
+    <div class="absolute bottom-6 left-6 z-20 glass-panel p-3 rounded-2xl border border-slate-700/80 shadow-2xl space-y-3 text-xs w-64">
+        <div class="font-bold text-slate-300 border-b border-slate-700/60 pb-1.5 flex items-center justify-between">
+            <span><i class="fa-solid fa-layer-group text-amber-400 mr-1.5"></i> Map Controls</span>
+            <span class="text-[10px] text-slate-400">Layers & Toggles</span>
+        </div>
+        
+        <!-- Basemap Selector -->
+        <div class="grid grid-cols-3 gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800 text-[11px] text-center">
+            <button id="layerHybrid" onclick="setMapLayer('hybrid')" class="px-2 py-1 font-medium rounded-lg bg-amber-500 text-slate-950 shadow">Hybrid</button>
+            <button id="layerSatellite" onclick="setMapLayer('satellite')" class="px-2 py-1 font-medium rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700">Sat</button>
+            <button id="layerStreet" onclick="setMapLayer('street')" class="px-2 py-1 font-medium rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700">Street</button>
+        </div>
+
+        <!-- Layer Checkboxes -->
+        <div class="space-y-1.5 text-[11px]">
+            <label class="flex items-center gap-2 text-slate-200 cursor-pointer">
+                <input type="checkbox" id="toggleCrimeZone" checked onchange="renderAllMarkers()" class="accent-red-500 rounded">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span> Crime Density Hotspots</span>
+            </label>
+            <label class="flex items-center gap-2 text-slate-200 cursor-pointer">
+                <input type="checkbox" id="toggleHomelessZone" checked onchange="renderAllMarkers()" class="accent-emerald-500 rounded">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Unhoused Population Zones</span>
+            </label>
+            <label class="flex items-center gap-2 text-slate-200 cursor-pointer">
+                <input type="checkbox" id="toggleFoodZone" checked onchange="renderAllMarkers()" class="accent-lime-500 rounded">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-lime-400 inline-block"></span> Food Desert Zones (5-7mi Deficit)</span>
+            </label>
+            <label class="flex items-center gap-2 text-slate-200 cursor-pointer">
+                <input type="checkbox" id="toggleBuildings" checked onchange="renderAllMarkers()" class="accent-purple-500 rounded">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block"></span> Suggested Safety Buildings</span>
+            </label>
+            <label class="flex items-center gap-2 text-slate-200 cursor-pointer">
+                <input type="checkbox" id="toggleShelterPins" checked onchange="renderAllMarkers()" class="accent-cyan-500 rounded">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400 inline-block"></span> Suggested Homeless Shelters</span>
+            </label>
+            <label class="flex items-center gap-2 text-slate-200 cursor-pointer">
+                <input type="checkbox" id="toggleFoodPins" checked onchange="renderAllMarkers()" class="accent-lime-400 rounded">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-lime-500 inline-block"></span> Suggested Grocery Stores / Pantries</span>
+            </label>
+            <label class="flex items-center gap-2 text-slate-200 cursor-pointer pt-1 border-t border-slate-800">
+                <input type="checkbox" id="clusterToggle" checked onchange="toggleClustering()" class="accent-amber-500 rounded">
+                <span>Enable Marker Clustering</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Sidebar / Tabbed Workspace Drawer -->
+    <aside id="sidebarDrawer" class="absolute top-16 right-0 bottom-0 w-full sm:w-[450px] glass-panel z-20 transform translate-x-full transition-transform duration-300 ease-in-out border-l border-slate-700/50 flex flex-col">
+        <!-- Drawer Header Tabs -->
+        <div class="bg-slate-900 border-b border-slate-700/80 flex items-center justify-between px-2 pt-2">
+            <div class="flex space-x-1 overflow-x-auto">
+                <button id="tabBtnFlags" onclick="switchDrawerTab('flags')" class="px-2.5 py-2 text-xs font-bold rounded-t-lg bg-slate-800 text-amber-400 border-t border-x border-slate-700 flex items-center gap-1">
+                    <i class="fa-solid fa-flag"></i> Flags
+                </button>
+                <button id="tabBtnCrime" onclick="switchDrawerTab('crime')" class="px-2.5 py-2 text-xs font-bold rounded-t-lg bg-slate-950 text-slate-400 hover:text-purple-300 flex items-center gap-1">
+                    <i class="fa-solid fa-building-shield text-purple-400"></i> Safety
+                </button>
+                <button id="tabBtnShelter" onclick="switchDrawerTab('shelter')" class="px-2.5 py-2 text-xs font-bold rounded-t-lg bg-slate-950 text-slate-400 hover:text-emerald-300 flex items-center gap-1">
+                    <i class="fa-solid fa-house-chimney-medical text-emerald-400"></i> Shelters
+                </button>
+                <button id="tabBtnFood" onclick="switchDrawerTab('food')" class="px-2.5 py-2 text-xs font-bold rounded-t-lg bg-slate-950 text-slate-400 hover:text-lime-300 flex items-center gap-1">
+                    <i class="fa-solid fa-apple-whole text-lime-400"></i> Food Security
+                </button>
+                <button id="tabBtnProposals" onclick="switchDrawerTab('proposals')" class="px-2.5 py-2 text-xs font-bold rounded-t-lg bg-slate-950 text-slate-400 hover:text-amber-300 flex items-center gap-1">
+                    <i class="fa-solid fa-file-contract text-amber-400"></i> Proposals
+                </button>
+            </div>
+            <button onclick="toggleSidebar()" class="text-slate-400 hover:text-white p-2 mb-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <!-- TAB 1: ALL FLAGS & FILTERS -->
+        <div id="tabContentFlags" class="flex-1 flex flex-col overflow-hidden">
+            <div class="p-3 bg-slate-900/90 border-b border-slate-800 space-y-2 text-xs">
+                <input type="text" id="searchInput" oninput="applyFilters()" placeholder="Search CC#, address, neighborhood or notes..." class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500">
+                <div class="grid grid-cols-2 gap-2">
+                    <select id="filterCategory" onchange="applyFilters()" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 focus:outline-none focus:border-amber-500">
+                        <option value="ALL">All Categories</option>
+                        <option value="sidewalk">Sidewalk Work Needed</option>
+                        <option value="infrastructure">Infrastructure Issues</option>
+                        <option value="safety">Public Safety / Crime (NIBRS)</option>
+                        <option value="crime_building">Suggested Safety Buildings</option>
+                        <option value="shelter_proposal">Homeless Shelter Proposals</option>
+                    </select>
+                    <select id="filterSeverity" onchange="applyFilters()" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 focus:outline-none focus:border-amber-500">
+                        <option value="ALL">All Severities</option>
+                        <option value="Critical">Critical</option>
+                        <option value="High">High</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Low">Low</option>
+                    </select>
+                </div>
+            </div>
+            <div id="flagList" class="flex-1 overflow-y-auto p-3 space-y-2.5"></div>
+        </div>
+
+        <!-- TAB 2: CRIME & SUGGESTED SAFETY BUILDINGS -->
+        <div id="tabContentCrime" class="hidden flex-1 flex flex-col overflow-y-auto p-4 space-y-4">
+            <div class="bg-purple-950/40 border border-purple-500/30 p-3.5 rounded-xl text-xs space-y-2">
+                <div class="font-bold text-purple-300 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-purple-400"></i> Crime Mitigation & Municipal Building Engine
+                </div>
+                <p class="text-slate-300 leading-relaxed">
+                    Based on Baltimore NIBRS crime density logs, the following high-crime corridors require public facility interventions to curb offense rates, foster youth programming, and improve community safety.
+                </p>
+            </div>
+
+            <div class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                <span>Recommended Building Interventions (<span id="crimeBuildingCount">0</span>)</span>
+                <button onclick="deployAllBuildingSuggestions()" class="text-[10px] bg-purple-600 hover:bg-purple-500 text-white font-bold px-2.5 py-1 rounded-lg">
+                    <i class="fa-solid fa-map-pin mr-1"></i> Deploy All To Map
+                </button>
+            </div>
+
+            <div id="crimeBuildingsList" class="space-y-3"></div>
+        </div>
+
+        <!-- TAB 3: HOMELESSNESS & SHELTER PROPOSALS -->
+        <div id="tabContentShelter" class="hidden flex-1 flex flex-col overflow-y-auto p-4 space-y-4">
+            <div class="bg-emerald-950/40 border border-emerald-500/30 p-3.5 rounded-xl text-xs space-y-2">
+                <div class="font-bold text-emerald-300 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-hand-holding-hand text-emerald-400"></i> Unhoused Population & Shelter Location Planner
+                </div>
+                <p class="text-slate-300 leading-relaxed">
+                    Cross-referencing 311 social service requests, unsheltered encampment records, and proximity gaps to active shelters. Below are optimal site placements for new emergency shelters and supportive housing centers.
+                </p>
+            </div>
+
+            <div class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                <span>Recommended Shelter Locations (<span id="shelterProposalCount">0</span>)</span>
+                <button onclick="deployAllShelterSuggestions()" class="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-2.5 py-1 rounded-lg">
+                    <i class="fa-solid fa-location-dot mr-1"></i> Deploy All To Map
+                </button>
+            </div>
+
+            <div id="shelterProposalsList" class="space-y-3"></div>
+        </div>
+
+        <!-- TAB 4: FOOD SECURITY & PANTRY SUGGESTIONS -->
+        <div id="tabContentFood" class="hidden flex-1 flex flex-col overflow-y-auto p-4 space-y-4">
+            <div class="bg-lime-950/40 border border-lime-500/30 p-3.5 rounded-xl text-xs space-y-2">
+                <div class="font-bold text-lime-300 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-apple-whole text-lime-400"></i> 5-7 Mile Radius Food Insecurity & Pantry Planner
+                </div>
+                <p class="text-slate-300 leading-relaxed">
+                    Evaluates spatial gaps where no full-scale grocery store or emergency food pantry exists within a <strong>5 to 7-mile radius</strong>. Below are suggested intervention sites for new food co-ops, mobile markets, and food pantries.
+                </p>
+                <button onclick="runFoodSecurityAnalysis()" class="w-full py-2 bg-lime-500/20 hover:bg-lime-500/30 text-lime-300 border border-lime-500/40 font-bold rounded-lg transition flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-radar"></i> Run 5-7 Mile Radius Scan Now
+                </button>
+            </div>
+
+            <div class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                <span>Suggested Food Resource Interventions (<span id="foodProposalCount">0</span>)</span>
+                <button onclick="deployAllFoodSuggestions()" class="text-[10px] bg-lime-600 hover:bg-lime-500 text-slate-950 font-bold px-2.5 py-1 rounded-lg">
+                    <i class="fa-solid fa-basket-shopping mr-1"></i> Deploy All To Map
+                </button>
+            </div>
+
+            <div id="foodProposalsList" class="space-y-3"></div>
+        </div>
+
+        <!-- TAB 5: CITY GRANT & CAPITAL PROPOSAL GENERATOR -->
+        <div id="tabContentProposals" class="hidden flex-1 flex flex-col overflow-y-auto p-4 space-y-4">
+            <div class="bg-amber-950/40 border border-amber-500/30 p-3.5 rounded-xl text-xs space-y-2">
+                <div class="font-bold text-amber-300 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-file-contract text-amber-400"></i> Capital Project & Grant Proposal Generator
+                </div>
+                <p class="text-slate-300 leading-relaxed">
+                    Generate an executive summary proposal for Baltimore City Council, HUD grant applications, USDA Food Desert Grants, or MD Infrastructure Funding based on current flags and recommendations.
+                </p>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block font-semibold text-slate-300 mb-1">Select Target Proposal Focus</label>
+                    <select id="proposalFocus" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200">
+                        <option value="combined">Combined Urban Safety, Food Security & Shelter</option>
+                        <option value="food">Food Insecurity & Grocery Co-op / Pantry Expansion</option>
+                        <option value="crime">Crime Reduction & Youth Safety Facilities</option>
+                        <option value="shelter">Unhoused Shelter & Supportive Housing Network</option>
+                        <option value="sidewalk">Sidewalk Repair & ADA Accessibility</option>
+                    </select>
+                </div>
+                <button onclick="generateProposalText()" class="w-full py-2.5 bg-gradient-to-r from-amber-500 to-purple-600 text-slate-950 font-bold rounded-lg hover:brightness-110 transition">
+                    <i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i> Generate Official City Proposal
+                </button>
+            </div>
+
+            <div class="flex-1 flex flex-col">
+                <label class="block font-semibold text-xs text-slate-300 mb-1">Generated Draft Proposal</label>
+                <textarea id="proposalOutput" rows="10" readonly class="w-full flex-1 bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 font-mono focus:outline-none placeholder-slate-600" placeholder="Click generate button above to build proposal draft..."></textarea>
+                <button onclick="copyProposalToClipboard()" class="mt-2 py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 font-semibold rounded-lg text-xs">
+                    <i class="fa-solid fa-copy mr-1"></i> Copy Proposal Text
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Dashboard Modal -->
+    <div id="dashboardModal" class="hidden fixed inset-0 z-40 glass-panel flex items-center justify-center p-4 bg-slate-950/80">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-chart-line text-amber-400 text-lg"></i>
+                    <h2 class="text-lg font-bold text-white">Baltimore Urban Safety & Planning Analytics</h2>
+                </div>
+                <button onclick="toggleDashboard()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+
+            <div class="p-5 overflow-y-auto space-y-6">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                        <div class="text-xs text-slate-400 font-medium">Total Tracked Entries</div>
+                        <div id="statTotal" class="text-2xl font-black text-white mt-1">0</div>
+                    </div>
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                        <div class="text-xs text-slate-400 font-medium">Crime & Safety Hazards</div>
+                        <div id="statCrime" class="text-2xl font-black text-red-400 mt-1">0</div>
+                    </div>
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                        <div class="text-xs text-slate-400 font-medium">Proposed Buildings & Shelters</div>
+                        <div id="statProposals" class="text-2xl font-black text-purple-400 mt-1">0</div>
+                    </div>
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                        <div class="text-xs text-slate-400 font-medium">Urban Health Index</div>
+                        <div id="statHealthIndex" class="text-2xl font-black text-emerald-400 mt-1">78%</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/60">
+                        <h3 class="text-xs font-semibold text-slate-300 mb-3 uppercase tracking-wider">Category Breakdown</h3>
+                        <div class="h-48"><canvas id="categoryChart"></canvas></div>
+                    </div>
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/60">
+                        <h3 class="text-xs font-semibold text-slate-300 mb-3 uppercase tracking-wider">Neighborhood Demand Distribution</h3>
+                        <div class="h-48"><canvas id="neighborhoodChart"></canvas></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Flag Modal -->
+    <div id="addFlagModal" class="hidden fixed inset-0 z-50 glass-panel flex items-center justify-center p-4 bg-slate-950/80">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+                <div class="flex items-center space-x-2">
+                    <div class="p-2 bg-amber-500/20 text-amber-400 rounded-lg"><i class="fa-solid fa-flag"></i></div>
+                    <h3 class="font-bold text-white text-base">Report Location / Submit Proposal Pin</h3>
+                </div>
+                <button onclick="closeAddModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+
+            <form id="flagForm" onsubmit="handleFormSubmit(event)" class="p-5 space-y-4">
+                <input type="hidden" id="formLat">
+                <input type="hidden" id="formLng">
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">Selected Location Coordinates</label>
+                    <div id="coordsDisplay" class="text-xs bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-amber-400 font-mono">Lat: 0.00000, Lng: 0.00000</div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">Neighborhood / Area</label>
+                    <select id="formNeighborhood" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-100 focus:ring-1 focus:ring-amber-500 focus:outline-none">
+                        <option value="Inner Harbor">Inner Harbor</option>
+                        <option value="Fells Point">Fells Point</option>
+                        <option value="Charles Village">Charles Village</option>
+                        <option value="Federal Hill">Federal Hill</option>
+                        <option value="Hampden">Hampden</option>
+                        <option value="Canton">Canton</option>
+                        <option value="Mount Vernon">Mount Vernon</option>
+                        <option value="West Baltimore">West Baltimore</option>
+                        <option value="East Baltimore">East Baltimore</option>
+                        <option value="Pigtown">Pigtown</option>
+                        <option value="Remington">Remington</option>
+                        <option value="Highlandtown">Highlandtown</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">Entry Type / Category</label>
+                    <select id="formCategory" onchange="updateSubtypeOptions()" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-100 focus:ring-1 focus:ring-amber-500 focus:outline-none">
+                        <option value="sidewalk">Sidewalk Work Needed</option>
+                        <option value="infrastructure">Infrastructure Issue</option>
+                        <option value="safety">Public Safety / Crime Hazard</option>
+                        <option value="crime_building">Suggested Safety Building</option>
+                        <option value="shelter_proposal">Homeless Shelter Proposal</option>
+                        <option value="food_resource">Grocery Store / Food Pantry Proposal</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Specific Subtype</label>
+                        <select id="formSubtype" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-100 focus:ring-1 focus:ring-amber-500 focus:outline-none"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Priority / Severity</label>
+                        <select id="formSeverity" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-100 focus:ring-1 focus:ring-amber-500 focus:outline-none">
+                            <option value="Low">Low Priority</option>
+                            <option value="Medium" selected>Medium Priority</option>
+                            <option value="High">High Priority</option>
+                            <option value="Critical">Critical Priority</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">Description & Justification</label>
+                    <textarea id="formDescription" rows="3" required placeholder="Describe issue or rationale for suggested municipal building / shelter..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-100 placeholder-slate-500 focus:ring-1 focus:ring-amber-500 focus:outline-none"></textarea>
+                </div>
+
+                <div class="pt-2 flex justify-end space-x-2">
+                    <button type="button" onclick="closeAddModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold">Cancel</button>
+                    <button type="submit" class="px-5 py-2 bg-gradient-to-r from-amber-500 to-purple-600 text-slate-950 font-bold rounded-lg text-xs shadow-lg">Submit Entry</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notification Overlay -->
+    <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+    <script>
+        let map;
+        let clusterGroup;
+        let rawMarkerList = [];
+        let isAddMode = false;
+        let streetOverlayLayer;
+        let categoryChartInstance = null;
+        let neighborhoodChartInstance = null;
+        let isClusteringEnabled = true;
+
+        // Section Visibility State (Infrastructure, Safety, Shelter, Food)
+        let activeSections = {
+            infrastructure: true,
+            safety: true,
+            shelter: true,
+            food: true
+        };
+
+        function toggleSection(sectionKey) {
+            activeSections[sectionKey] = !activeSections[sectionKey];
+            updateSectionToggleButtons();
+            renderAllMarkers();
+            renderTabLists();
+            updateListAndStats();
+            
+            const nameMap = {
+                infrastructure: 'Sidewalks & Infrastructure',
+                safety: 'Safety & Crime',
+                shelter: 'Shelters & Unhoused Services',
+                food: 'Food Resources & Pantries'
+            };
+            const status = activeSections[sectionKey] ? 'visible' : 'hidden';
+            showToast(`${nameMap[sectionKey]} is now ${status}`, 'info');
+        }
+
+        function updateSectionToggleButtons() {
+            const configs = [
+                { key: 'infrastructure', checkBtnId: 'checkBtnInfra', iconId: 'checkInfra', activeBg: 'bg-amber-500 text-slate-950', inactiveBg: 'bg-slate-800 text-slate-500 border-slate-700' },
+                { key: 'safety', checkBtnId: 'checkBtnSafety', iconId: 'checkSafety', activeBg: 'bg-purple-500 text-white', inactiveBg: 'bg-slate-800 text-slate-500 border-slate-700' },
+                { key: 'shelter', checkBtnId: 'checkBtnShelter', iconId: 'checkShelter', activeBg: 'bg-emerald-500 text-slate-950', inactiveBg: 'bg-slate-800 text-slate-500 border-slate-700' },
+                { key: 'food', checkBtnId: 'checkBtnFood', iconId: 'checkFood', activeBg: 'bg-lime-500 text-slate-950', inactiveBg: 'bg-slate-800 text-slate-500 border-slate-700' }
+            ];
+
+            configs.forEach(cfg => {
+                const checkBtn = document.getElementById(cfg.checkBtnId);
+                const icon = document.getElementById(cfg.iconId);
+                const isActive = activeSections[cfg.key];
+
+                if (checkBtn && icon) {
+                    if (isActive) {
+                        checkBtn.className = `absolute -top-1.5 -right-1.5 ${cfg.activeBg} rounded-full w-4 h-4 text-[9px] flex items-center justify-center font-black shadow-md border border-slate-900 transition-all scale-100 opacity-100`;
+                        icon.className = "fa-solid fa-check";
+                    } else {
+                        checkBtn.className = `absolute -top-1.5 -right-1.5 ${cfg.inactiveBg} rounded-full w-4 h-4 text-[9px] flex items-center justify-center font-black shadow-md border border-slate-900 transition-all scale-90 opacity-60`;
+                        icon.className = "fa-solid fa-xmark";
+                    }
+                }
+            });
+        }
+
+        const subcategories = {
+            sidewalk: [
+                'Cracked / Broken Pavement',
+                'Uneven Walkway / Trip Hazard',
+                'Obstruction (Overgrown Trees/Debris)',
+                'ADA Accessibility Ramp Barrier',
+                'Missing Sidewalk Slab'
+            ],
+            infrastructure: [
+                'Pothole / Roadway Collapse',
+                'Broken / Non-functioning Streetlight',
+                'Water Main Leak / Standing Water',
+                'Missing or Damaged Traffic Sign',
+                'Storm Drain Blockage'
+            ],
+            safety: [
+                'NIBRS Crime Incident / Public Safety',
+                'Poor Street Lighting Hazard',
+                'Illegal Dumping Site',
+                'Abandoned Vehicle Hazard',
+                'Structural / Vacant Building Danger',
+                'Graffiti / Property Vandalism'
+            ],
+            crime_building: [
+                'Youth Recreation & Community Center',
+                'Community Violence Intervention (CVI) Hub',
+                'Police Substation & Safety Patrol Center',
+                'Behavioral Health & Crisis Center',
+                'Safety Lighting & Camera Control Hub'
+            ],
+            shelter_proposal: [
+                'Low-Barrier Emergency Shelter',
+                'Permanent Supportive Housing Facility',
+                'Family & Youth Transitional Center',
+                'Day Resource & Medical Intake Hub',
+                'Safe Haven Night Shelter'
+            ],
+            food_resource: [
+                'Community Grocery Cooperative',
+                'Emergency Food Pantry & Bank',
+                'Mobile Produce Market Station',
+                'Subsidized Fresh Food Supermarket',
+                'Urban Agriculture & Food Distribution Hub'
+            ]
+        };
+
+        // Existing Food Outlets in Baltimore (Used to check 5-7 mile radius proximity)
+        const existingFoodResources = [
+            { name: 'Inner Harbor Supermarket', lat: 39.2850, lng: -76.6080 },
+            { name: 'Canton Grocery & Fresh Market', lat: 39.2800, lng: -76.5750 },
+            { name: 'Charles Village Organic Foods', lat: 39.3250, lng: -76.6150 }
+        ];
+
+        // Food Insecurity / Food Desert Zones (>5-7 miles radius from full grocery store)
+        const foodHotspots = [
+            { id: 'fh-1', name: 'West Baltimore Food Insecurity Zone', lat: 39.2990, lng: -76.6550, radius: 9600, defect: 'No full-scale grocery within 6.2 miles', recPantry: 'West Baltimore Community Grocery Co-op' },
+            { id: 'fh-2', name: 'East Baltimore / Monument St Corridor', lat: 39.3020, lng: -76.5700, radius: 8800, defect: 'No fresh food outlet within 5.5 miles', recPantry: 'Eastside Emergency Food Pantry & Fresh Hub' },
+            { id: 'fh-3', name: 'South Baltimore / Pigtown Food Desert', lat: 39.2780, lng: -76.6420, radius: 9000, defect: 'No fresh produce within 5.8 miles', recPantry: 'Pigtown Mobile Fresh Produce Market' }
+        ];
+
+        // Suggested Grocery Stores / Food Pantries
+        let suggestedFoodResources = [
+            {
+                id: 'food-1',
+                lat: 39.2985,
+                lng: -76.6540,
+                neighborhood: 'West Baltimore',
+                category: 'food_resource',
+                subtype: 'Community Grocery Cooperative',
+                severity: 'Critical',
+                status: 'Proposed',
+                source: '5-7mi Radius Analysis Engine',
+                costEstimate: '$2.1M',
+                expectedImpact: 'Serves 18,000+ residents living in 6+ mi food desert',
+                nearestResourceDist: '6.2 miles to nearest full supermarket',
+                description: 'West Baltimore Community Grocery Co-op - Fresh produce, staple goods, nutrition education center, and SNAP/WIC doubling program.',
+                date: '2026-09-26',
+                upvotes: 68
+            },
+            {
+                id: 'food-2',
+                lat: 39.3025,
+                lng: -76.5680,
+                neighborhood: 'East Baltimore',
+                category: 'food_resource',
+                subtype: 'Emergency Food Pantry & Bank',
+                severity: 'High',
+                status: 'Proposed',
+                source: '5-7mi Radius Analysis Engine',
+                costEstimate: '$850K',
+                expectedImpact: 'Provides 3,500 monthly emergency meals',
+                nearestResourceDist: '5.5 miles to nearest grocery store',
+                description: 'Monument St Emergency Food Bank & Kitchen - Walk-in food pantry, refrigerated perishable distribution, and weekend family meal kits.',
+                date: '2026-09-25',
+                upvotes: 49
+            },
+            {
+                id: 'food-3',
+                lat: 39.2775,
+                lng: -76.6410,
+                neighborhood: 'Pigtown',
+                category: 'food_resource',
+                subtype: 'Mobile Produce Market Station',
+                severity: 'High',
+                status: 'Proposed',
+                source: '5-7mi Radius Analysis Engine',
+                costEstimate: '$400K',
+                expectedImpact: 'Serves 4,000 low-mobility elderly & families',
+                nearestResourceDist: '5.8 miles to nearest fresh market',
+                description: 'Pigtown Mobile Farm Market & Pantry Hub - Refrigerated vehicle fleet bringing local farm produce to neighborhood stops 4 days a week.',
+                date: '2026-09-24',
+                upvotes: 36
+            }
+        ];
+
+        // Calculate distance in miles between two coordinate points (Haversine formula)
+        function calculateDistanceMiles(lat1, lon1, lat2, lon2) {
+            const R = 3958.8; // Radius of Earth in miles
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // Checks if a given coordinate is more than 5-7 miles away from any food resource
+        function checkFoodSecurityRadius(lat, lng) {
+            let minDistance = Infinity;
+            let nearestName = "None";
+
+            // Combine existing stores and suggested stores
+            const allFoodPoints = [...existingFoodResources, ...suggestedFoodResources];
+
+            allFoodPoints.forEach(foodPoint => {
+                const dist = calculateDistanceMiles(lat, lng, foodPoint.lat, foodPoint.lng);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    nearestName = foodPoint.name || foodPoint.subtype;
+                }
+            });
+
+            return {
+                minDistanceMiles: minDistance.toFixed(1),
+                isFoodInsecure: minDistance >= 5.0, // Food desert flag if >= 5.0 miles
+                nearestResourceName: nearestName
+            };
+        }
+
+        function runFoodSecurityAnalysis() {
+            let newlyFlaggedCount = 0;
+
+            // Scan major neighborhood centroids in Baltimore
+            const neighborhoodsToScan = [
+                { name: 'West Baltimore', lat: 39.2990, lng: -76.6550 },
+                { name: 'East Baltimore', lat: 39.3020, lng: -76.5700 },
+                { name: 'Pigtown', lat: 39.2780, lng: -76.6420 },
+                { name: 'Cherry Hill', lat: 39.2520, lng: -76.6210 },
+                { name: 'Park Heights', lat: 39.3480, lng: -76.6620 }
+            ];
+
+            neighborhoodsToScan.forEach(nh => {
+                const analysis = checkFoodSecurityRadius(nh.lat, nh.lng);
+                if (analysis.isFoodInsecure) {
+                    // Check if already suggested
+                    const exists = suggestedFoodResources.some(f => f.neighborhood === nh.name);
+                    if (!exists) {
+                        const newPantry = {
+                            id: 'food-auto-' + Date.now() + Math.random().toString(36).substr(2, 4),
+                            lat: nh.lat,
+                            lng: nh.lng,
+                            neighborhood: nh.name,
+                            category: 'food_resource',
+                            subtype: 'Community Grocery Cooperative',
+                            severity: 'Critical',
+                            status: 'Proposed',
+                            source: '5-7mi Radius Scan',
+                            costEstimate: '$1.8M',
+                            expectedImpact: `Eliminates ${analysis.minDistanceMiles}-mile food desert zone`,
+                            nearestResourceDist: `${analysis.minDistanceMiles} miles to nearest food outlet`,
+                            description: `Automated Food Desert Flag: Nearest food pantry/grocery store is ${analysis.minDistanceMiles} miles away (exceeds 5-7 mile security threshold). Recommended immediate investment in a Community Food Co-Op / Pantry.`,
+                            date: new Date().toISOString().split('T')[0],
+                            upvotes: 10
+                        };
+                        suggestedFoodResources.unshift(newPantry);
+                        newlyFlaggedCount++;
+                    }
+                }
+            });
+
+            renderAllMarkers();
+            renderTabLists();
+            updateListAndStats();
+
+            if (newlyFlaggedCount > 0) {
+                showToast(`Food Security Scan complete: Identified ${newlyFlaggedCount} new food desert locations exceeding 5-7mi radius!`, 'success');
+            } else {
+                showToast('Food Security Scan complete: All current food desert hotspots have active proposals!', 'info');
+            }
+
+            openTab('food');
+        }
+
+        function getCategoryStyle(category) {
+            if (category === 'sidewalk') return { color: '#eab308', icon: 'fa-person-walking-with-cane' };
+            if (category === 'infrastructure') return { color: '#3b82f6', icon: 'fa-screwdriver-wrench' };
+            if (category === 'safety') return { color: '#ef4444', icon: 'fa-triangle-exclamation' };
+            if (category === 'crime_building') return { color: '#a855f7', icon: 'fa-building-shield' };
+            if (category === 'shelter_proposal') return { color: '#06b6d4', icon: 'fa-house-chimney-medical' };
+            if (category === 'food_resource') return { color: '#84cc16', icon: 'fa-apple-whole' };
+            return { color: '#f59e0b', icon: 'fa-flag' };
+        }
+
+        function renderAllMarkers() {
+            clusterGroup.clearLayers();
+            rawMarkerList.forEach(m => map.removeLayer(m));
+            rawMarkerList = [];
+
+            // 1. Crime Hotspot Circles
+            if (activeSections.safety && document.getElementById('toggleCrimeZone').checked) {
+                crimeHotspots.forEach(zone => {
+                    const circle = L.circle([zone.lat, zone.lng], {
+                        color: '#ef4444',
+                        fillColor: '#f87171',
+                        fillOpacity: 0.22,
+                        radius: zone.radius
+                    }).bindPopup(`
+                        <div class="p-3 text-xs">
+                            <span class="text-[9px] bg-red-500/20 text-red-400 border border-red-500/30 font-bold px-2 py-0.5 rounded uppercase">High Crime Zone</span>
+                            <h4 class="font-bold text-sm text-white mt-1">${zone.name}</h4>
+                            <div class="text-slate-300 mt-1"><strong>Offenses:</strong> ${zone.primaryTypes}</div>
+                            <div class="text-purple-400 mt-1"><strong>Recommended Building:</strong> ${zone.recBuilding}</div>
+                        </div>
+                    `);
+                    circle.addTo(map);
+                    rawMarkerList.push(circle);
+                });
+            }
+
+            // 2. Homeless Unhoused Density Circles
+            if (activeSections.shelter && document.getElementById('toggleHomelessZone').checked) {
+                homelessHotspots.forEach(zone => {
+                    const circle = L.circle([zone.lat, zone.lng], {
+                        color: '#10b981',
+                        fillColor: '#34d399',
+                        fillOpacity: 0.22,
+                        radius: zone.radius
+                    }).bindPopup(`
+                        <div class="p-3 text-xs">
+                            <span class="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold px-2 py-0.5 rounded uppercase">Unhoused Concentration Zone</span>
+                            <h4 class="font-bold text-sm text-white mt-1">${zone.name}</h4>
+                            <div class="text-slate-300 mt-1"><strong>Data Estimate:</strong> ${zone.countEstimate}</div>
+                            <div class="text-emerald-400 mt-1"><strong>Shelter Recommendation:</strong> ${zone.recShelter}</div>
+                        </div>
+                    `);
+                    circle.addTo(map);
+                    rawMarkerList.push(circle);
+                });
+            }
+
+            // 3. Food Desert Circles (5-7 Mile Radius)
+            if (activeSections.food && document.getElementById('toggleFoodZone').checked) {
+                foodHotspots.forEach(zone => {
+                    const circle = L.circle([zone.lat, zone.lng], {
+                        color: '#84cc16',
+                        fillColor: '#a3e635',
+                        fillOpacity: 0.18,
+                        radius: zone.radius
+                    }).bindPopup(`
+                        <div class="p-3 text-xs">
+                            <span class="text-[9px] bg-lime-500/20 text-lime-400 border border-lime-500/30 font-bold px-2 py-0.5 rounded uppercase">5-7 Mile Food Desert Zone</span>
+                            <h4 class="font-bold text-sm text-white mt-1">${zone.name}</h4>
+                            <div class="text-slate-300 mt-1"><strong>Resource Deficit:</strong> ${zone.defect}</div>
+                            <div class="text-lime-400 mt-1"><strong>Recommended Pantry/Store:</strong> ${zone.recPantry}</div>
+                        </div>
+                    `);
+                    circle.addTo(map);
+                    rawMarkerList.push(circle);
+                });
+            }
+
+            // 4. Combined Flag Data & Proposals filtered by active sections
+            let combinedData = [...getFilteredData()];
+            
+            if (activeSections.safety && document.getElementById('toggleBuildings').checked) {
+                suggestedSafetyBuildings.forEach(b => {
+                    if (!combinedData.some(x => x.id === b.id)) combinedData.push(b);
+                });
+            }
+            if (activeSections.shelter && document.getElementById('toggleShelterPins').checked) {
+                suggestedShelters.forEach(s => {
+                    if (!combinedData.some(x => x.id === s.id)) combinedData.push(s);
+                });
+            }
+            if (activeSections.food && document.getElementById('toggleFoodPins').checked) {
+                suggestedFoodResources.forEach(f => {
+                    if (!combinedData.some(x => x.id === f.id)) combinedData.push(f);
+                });
+            }
+
+            combinedData.forEach(item => {
+                const style = getCategoryStyle(item.category);
+                let pulseClass = '';
+                if (item.severity === 'Critical') pulseClass = 'marker-pulse-critical';
+                else if (item.category === 'crime_building') pulseClass = 'marker-pulse-building';
+                else if (item.category === 'shelter_proposal') pulseClass = 'marker-pulse-shelter';
+                else if (item.category === 'food_resource') pulseClass = 'marker-pulse-food';
+
+                const customIcon = L.divIcon({
+                    className: 'custom-map-flag-icon',
+                    html: `
+                        <div class="relative flex items-center justify-center w-8 h-8 rounded-full ${pulseClass}" style="background-color: ${style.color}; shadow: 0 4px 10px rgba(0,0,0,0.6);">
+                            <i class="fa-solid ${style.icon} text-slate-950 text-sm"></i>
+                            ${item.status === 'Resolved' ? '<span class="absolute -bottom-1 -right-1 bg-emerald-500 text-white rounded-full w-4 h-4 text-[9px] flex items-center justify-center"><i class="fa-solid fa-check"></i></span>' : ''}
+                        </div>
+                    `,
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 16]
+                });
+
+                const marker = L.marker([item.lat, item.lng], { icon: customIcon });
+
+                const popupContent = `
+                    <div class="p-3">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${getSeverityBadgeClass(item.severity)}">
+                                ${item.severity} Priority
+                            </span>
+                            <span class="text-[10px] font-medium text-slate-400">${item.date}</span>
+                        </div>
+                        <h4 class="font-bold text-sm text-white leading-tight mb-1">${item.subtype}</h4>
+                        <div class="text-xs text-amber-400 font-medium mb-2"><i class="fa-solid fa-location-dot mr-1"></i>${item.neighborhood}</div>
+                        <p class="text-xs text-slate-300 mb-2 bg-slate-800/80 p-2 rounded border border-slate-700/50">${item.description}</p>
+                        
+                        ${item.costEstimate ? `<div class="text-[11px] text-purple-300"><strong>Cost Est:</strong> ${item.costEstimate} | <strong>Impact:</strong> ${item.expectedImpact}</div>` : ''}
+                        ${item.bedCapacity ? `<div class="text-[11px] text-emerald-300"><strong>Capacity:</strong> ${item.bedCapacity} | <strong>Transit:</strong> ${item.transitAccess}</div>` : ''}
+                        ${item.nearestResourceDist ? `<div class="text-[11px] text-lime-300"><strong>Radius Gap:</strong> ${item.nearestResourceDist}</div>` : ''}
+
+                        <div class="flex items-center justify-between text-xs pt-2 mt-2 border-t border-slate-700/60">
+                            <button onclick="upvoteFlag('${item.id}')" class="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 px-2.5 py-1 rounded flex items-center gap-1 border border-slate-700">
+                                <i class="fa-solid fa-thumbs-up"></i> <span>${item.upvotes || 0}</span>
+                            </button>
+                            <span class="text-[11px] font-semibold text-amber-400">
+                                ${item.status}
+                            </span>
+                        </div>
+                    </div>
+                `;
+
+                marker.bindPopup(popupContent);
+
+                if (isClusteringEnabled) {
+                    clusterGroup.addLayer(marker);
+                } else {
+                    marker.addTo(map);
+                    rawMarkerList.push(marker);
+                }
+            });
+        }
+
+        function getFilteredData() {
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            const cat = document.getElementById('filterCategory').value;
+            const sev = document.getElementById('filterSeverity').value;
+
+            return flagsData.filter(item => {
+                // Section level visibility check
+                if (item.category === 'sidewalk' || item.category === 'infrastructure') {
+                    if (!activeSections.infrastructure) return false;
+                } else if (item.category === 'safety' || item.category === 'crime_building') {
+                    if (!activeSections.safety) return false;
+                } else if (item.category === 'shelter_proposal') {
+                    if (!activeSections.shelter) return false;
+                } else if (item.category === 'food_resource') {
+                    if (!activeSections.food) return false;
+                }
+
+                const matchSearch = item.description.toLowerCase().includes(search) || 
+                                    item.neighborhood.toLowerCase().includes(search) ||
+                                    item.subtype.toLowerCase().includes(search) ||
+                                    (item.ccNumber && item.ccNumber.toLowerCase().includes(search));
+                const matchCat = cat === 'ALL' || item.category === cat;
+                const matchSev = sev === 'ALL' || item.severity === sev;
+
+                return matchSearch && matchCat && matchSev;
+            });
+        }
+
+        function switchDrawerTab(tabName) {
+            const tabs = ['flags', 'crime', 'shelter', 'food', 'proposals'];
+            
+            tabs.forEach(t => {
+                const capitalKey = t.charAt(0).toUpperCase() + t.slice(1);
+                const btn = document.getElementById(`tabBtn${capitalKey}`);
+                const content = document.getElementById(`tabContent${capitalKey}`);
+                
+                if (btn) {
+                    btn.className = "px-2.5 py-2 text-xs font-bold rounded-t-lg bg-slate-950 text-slate-400 hover:text-white flex items-center gap-1 border-t border-x border-transparent";
+                }
+                if (content) {
+                    content.classList.add('hidden');
+                }
+            });
+
+            const activeCapitalKey = tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            const activeBtn = document.getElementById(`tabBtn${activeCapitalKey}`);
+            const activeContent = document.getElementById(`tabContent${activeCapitalKey}`);
+            
+            if (activeBtn) {
+                activeBtn.className = "px-2.5 py-2 text-xs font-bold rounded-t-lg bg-slate-800 text-amber-400 border-t border-x border-slate-700 flex items-center gap-1";
+            }
+            if (activeContent) {
+                activeContent.classList.remove('hidden');
+            }
+        }
+
+        function handleFormSubmit(event) {
+            event.preventDefault();
+            const lat = parseFloat(document.getElementById('formLat').value);
+            const lng = parseFloat(document.getElementById('formLng').value);
+            const neighborhood = document.getElementById('formNeighborhood').value;
+            const category = document.getElementById('formCategory').value;
+            const subtype = document.getElementById('formSubtype').value;
+            const severity = document.getElementById('formSeverity').value;
+            const description = document.getElementById('formDescription').value;
+
+            // Perform automatic 5-7 mile food security check
+            const foodCheck = checkFoodSecurityRadius(lat, lng);
+
+            const newEntry = {
+                id: 'flag-' + Date.now(),
+                lat: lat,
+                lng: lng,
+                neighborhood: neighborhood,
+                category: category,
+                subtype: subtype,
+                severity: severity,
+                status: 'Open',
+                source: 'User Submission',
+                nearestResourceDist: `${foodCheck.minDistanceMiles} miles to nearest food resource`,
+                description: description,
+                date: new Date().toISOString().split('T')[0],
+                upvotes: 1
+            };
+
+            if (category === 'crime_building') {
+                suggestedSafetyBuildings.unshift(newEntry);
+                showToast('Suggested Safety Building added to planner!', 'success');
+            } else if (category === 'shelter_proposal') {
+                suggestedShelters.unshift(newEntry);
+                showToast('Suggested Homeless Shelter proposal added!', 'success');
+            } else if (category === 'food_resource') {
+                suggestedFoodResources.unshift(newEntry);
+                showToast(`Food Pantry / Grocery Store added! Nearest existing resource is ${foodCheck.minDistanceMiles}mi away.`, 'success');
+            } else {
+                flagsData.unshift(newEntry);
+                showToast('Location flag submitted successfully!', 'success');
+            }
+
+            closeAddModal();
+            renderAllMarkers();
+            renderTabLists();
+            updateListAndStats();
+        }
+
+        function upvoteFlag(id) {
+            let item = flagsData.find(f => f.id === id) || 
+                       suggestedSafetyBuildings.find(b => b.id === id) || 
+                       suggestedShelters.find(s => s.id === id) ||
+                       suggestedFoodResources.find(f => f.id === id);
+            if (item) {
+                item.upvotes = (item.upvotes || 0) + 1;
+                renderAllMarkers();
+                renderTabLists();
+                updateListAndStats();
+                showToast('Upvoted entry!', 'success');
+            }
+        }
+
+        function renderTabLists() {
+            // Crime Buildings List
+            const bList = document.getElementById('crimeBuildingsList');
+            document.getElementById('crimeBuildingCount').innerText = suggestedSafetyBuildings.length;
+            document.getElementById('buildingBadge').innerText = suggestedSafetyBuildings.length;
+
+            bList.innerHTML = suggestedSafetyBuildings.map(b => `
+                <div class="bg-slate-900 border border-purple-500/30 p-3.5 rounded-xl space-y-2 shadow-lg">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[9px] font-bold uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded">
+                            ${b.severity} Priority
+                        </span>
+                        <span class="text-xs text-amber-400 font-medium"><i class="fa-solid fa-location-dot mr-1"></i>${b.neighborhood}</span>
+                    </div>
+                    <h4 class="font-bold text-sm text-white">${b.subtype}</h4>
+                    <p class="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">${b.description}</p>
+                    <div class="grid grid-cols-2 gap-2 text-[11px] pt-1 text-slate-400">
+                        <div><strong class="text-slate-200">Cost:</strong> ${b.costEstimate || 'N/A'}</div>
+                        <div><strong class="text-purple-300">Target Impact:</strong> ${b.expectedImpact || 'High'}</div>
+                    </div>
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                        <button onclick="panToCoords(${b.lat}, ${b.lng})" class="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-crosshairs"></i> Focus Map
+                        </button>
+                        <button onclick="upvoteFlag('${b.id}')" class="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 px-2.5 py-1 rounded flex items-center gap-1 border border-slate-700">
+                            <i class="fa-solid fa-thumbs-up"></i> <span>${b.upvotes || 0}</span>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            // Shelter Proposals List
+            const sList = document.getElementById('shelterProposalsList');
+            document.getElementById('shelterProposalCount').innerText = suggestedShelters.length;
+            document.getElementById('shelterBadge').innerText = suggestedShelters.length;
+
+            sList.innerHTML = suggestedShelters.map(s => `
+                <div class="bg-slate-900 border border-emerald-500/30 p-3.5 rounded-xl space-y-2 shadow-lg">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded">
+                            ${s.severity} Priority
+                        </span>
+                        <span class="text-xs text-amber-400 font-medium"><i class="fa-solid fa-location-dot mr-1"></i>${s.neighborhood}</span>
+                    </div>
+                    <h4 class="font-bold text-sm text-white">${s.subtype}</h4>
+                    <p class="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">${s.description}</p>
+                    <div class="grid grid-cols-2 gap-2 text-[11px] pt-1 text-slate-400">
+                        <div><strong class="text-slate-200">Capacity:</strong> ${s.bedCapacity || 'N/A'}</div>
+                        <div><strong class="text-emerald-300">Transit Access:</strong> ${s.transitAccess || 'Good'}</div>
+                    </div>
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                        <button onclick="panToCoords(${s.lat}, ${s.lng})" class="text-xs text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-crosshairs"></i> Focus Map
+                        </button>
+                        <button onclick="upvoteFlag('${s.id}')" class="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 px-2.5 py-1 rounded flex items-center gap-1 border border-slate-700">
+                            <i class="fa-solid fa-thumbs-up"></i> <span>${s.upvotes || 0}</span>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            // Food Proposals List
+            const fList = document.getElementById('foodProposalsList');
+            document.getElementById('foodProposalCount').innerText = suggestedFoodResources.length;
+            document.getElementById('foodBadge').innerText = suggestedFoodResources.length;
+
+            fList.innerHTML = suggestedFoodResources.map(f => `
+                <div class="bg-slate-900 border border-lime-500/30 p-3.5 rounded-xl space-y-2 shadow-lg">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[9px] font-bold uppercase tracking-wider bg-lime-500/20 text-lime-300 border border-lime-500/30 px-2 py-0.5 rounded">
+                            ${f.severity} Priority
+                        </span>
+                        <span class="text-xs text-amber-400 font-medium"><i class="fa-solid fa-location-dot mr-1"></i>${f.neighborhood}</span>
+                    </div>
+                    <h4 class="font-bold text-sm text-white">${f.subtype}</h4>
+                    <p class="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">${f.description}</p>
+                    <div class="grid grid-cols-2 gap-2 text-[11px] pt-1 text-slate-400">
+                        <div><strong class="text-slate-200">Radius Deficit:</strong> ${f.nearestResourceDist || '5+ Miles'}</div>
+                        <div><strong class="text-lime-300">Expected Impact:</strong> ${f.expectedImpact || 'High'}</div>
+                    </div>
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                        <button onclick="panToCoords(${f.lat}, ${f.lng})" class="text-xs text-lime-400 hover:text-lime-300 font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-crosshairs"></i> Focus Map
+                        </button>
+                        <button onclick="upvoteFlag('${f.id}')" class="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 px-2.5 py-1 rounded flex items-center gap-1 border border-slate-700">
+                            <i class="fa-solid fa-thumbs-up"></i> <span>${f.upvotes || 0}</span>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function deployAllFoodSuggestions() {
+            document.getElementById('toggleFoodPins').checked = true;
+            renderAllMarkers();
+            showToast('Deployed all food pantry & grocery suggestions to map!', 'success');
+        }
+
+        function updateListAndStats() {
+            const filtered = getFilteredData();
+            
+            document.getElementById('badgeCount').innerText = filtered.length;
+
+            const listContainer = document.getElementById('flagList');
+            if (filtered.length === 0) {
+                listContainer.innerHTML = '<div class="text-center text-slate-500 py-8 text-xs">No matching flags found.</div>';
+            } else {
+                listContainer.innerHTML = filtered.map(item => `
+                    <div class="bg-slate-900/90 border border-slate-800 hover:border-slate-700 p-3 rounded-xl transition shadow-md">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <span class="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${getSeverityBadgeClass(item.severity)}">
+                                ${item.severity}
+                            </span>
+                            <span class="text-[10px] text-slate-400 font-mono">${item.ccNumber ? 'CC#' + item.ccNumber : item.date}</span>
+                        </div>
+                        <div class="text-xs font-bold text-slate-100 leading-tight mb-1">${item.subtype}</div>
+                        <div class="text-[11px] text-amber-400 font-medium mb-1.5"><i class="fa-solid fa-location-dot mr-1"></i>${item.neighborhood}</div>
+                        <p class="text-[11px] text-slate-300 bg-slate-950/60 p-2 rounded border border-slate-800/80 mb-2">${item.description}</p>
+                        <div class="flex items-center justify-between text-[11px] pt-1 border-t border-slate-800/80">
+                            <button onclick="upvoteFlag('${item.id}')" class="text-slate-400 hover:text-amber-400 flex items-center gap-1 transition">
+                                <i class="fa-solid fa-thumbs-up"></i> <span>${item.upvotes || 0}</span>
+                            </button>
+                            <span class="font-semibold text-amber-400">
+                                ${item.status}
+                            </span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Calculate metrics
+            const total = flagsData.length + suggestedSafetyBuildings.length + suggestedShelters.length + suggestedFoodResources.length;
+            const crimeCount = flagsData.filter(f => f.category === 'safety').length;
+            const proposalsCount = suggestedSafetyBuildings.length + suggestedShelters.length + suggestedFoodResources.length;
+
+            document.getElementById('statTotal').innerText = total;
+            document.getElementById('statCrime').innerText = crimeCount;
+            document.getElementById('statProposals').innerText = proposalsCount;
+
+            if (document.getElementById('dashboardModal') && !document.getElementById('dashboardModal').classList.contains('hidden')) {
+                updateCharts();
+            }
+        }
+
+        function generateProposalText() {
+            const focus = document.getElementById('proposalFocus').value;
+            const dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+            
+            let title = "BALTIMORE CITY CAPITAL IMPROVEMENT, FOOD SECURITY & SAFETY GRANT PROPOSAL";
+            if (focus === 'crime') title = "BALTIMORE CRIME REDUCTION & YOUTH FACILITY INVESTMENT PLAN";
+            if (focus === 'shelter') title = "BALTIMORE UNHOUSED SHELTER & SUPPORTIVE HOUSING EXPANSION PROPOSAL";
+            if (focus === 'food') title = "BALTIMORE 5-7 MILE FOOD DESERT MITIGATION & PANTRY EXPANSION PLAN";
+
+            let proposal = `========================================================================
+${title}
+Prepared via Baltimore Urban Safety, Infrastructure & Food Intelligence Network
+Date: ${dateStr}
+Target Authority: Baltimore City Council / MD Department of Housing / USDA Food Desert Grant Program
+========================================================================
+
+I. EXECUTIVE SUMMARY
+This capital grant request outlines high-priority infrastructure, public safety, food insecurity intervention, and human services facility investments for Baltimore City neighborhoods. Cross-referencing Open Baltimore 311 logs, NIBRS crime density data, 5-7 mile food desert spatial models, and unhoused population metrics.
+
+II. PROPOSED COMMUNITY GROCERY STORES & EMERGENCY FOOD PANPORTATION
+${suggestedFoodResources.map((f, i) => `${i+1}. ${f.subtype} (${f.neighborhood})
+   - Rationale: ${f.description}
+   - Distance Deficit: ${f.nearestResourceDist}
+   - Estimated Cost: ${f.costEstimate}
+   - Anticipated Impact: ${f.expectedImpact}`).join('\n\n')}
+
+III. PROPOSED COMMUNITY SAFETY BUILDINGS & YOUTH FACILITIES
+${suggestedSafetyBuildings.map((b, i) => `${i+1}. ${b.subtype} (${b.neighborhood})
+   - Purpose: ${b.description}
+   - Estimated Capital Cost: ${b.costEstimate}
+   - Anticipated Impact: ${b.expectedImpact}`).join('\n\n')}
+
+IV. UNHOUSED POPULATION & SHELTER PLACEMENT STRATEGY
+${suggestedShelters.map((s, i) => `${i+1}. ${s.subtype} (${s.neighborhood})
+   - Rationale: ${s.description}
+   - Target Capacity: ${s.bedCapacity}
+   - Transit Connectivity: ${s.transitAccess}`).join('\n\n')}
+
+V. IMMEDIATE INFRASTRUCTURE & SIDEWALK HAZARDS
+Tracked Active Sidewalk & Safety Flags: ${flagsData.length} urgent repairs logged across high-pedestrian corridors.
+
+VI. CONCLUSION & REQUESTED ACTION
+We request immediate allocation from municipal capital funds, state food security grants, and federal community development grants to break ground on these sites.
+`;
+
+            document.getElementById('proposalOutput').value = proposal;
+            showToast('Generated City Council & Grant proposal draft!', 'success');
+        }
+
+        function updateCharts() {
+            if (typeof Chart === 'undefined') return;
+
+            const ctxCat = document.getElementById('categoryChart');
+            if (ctxCat) {
+                if (categoryChartInstance) categoryChartInstance.destroy();
+                categoryChartInstance = new Chart(ctxCat, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Sidewalks', 'Infrastructure', 'Public Safety', 'Safety Buildings', 'Shelters', 'Food Resources'],
+                        datasets: [{
+                            data: [
+                                flagsData.filter(f=>f.category==='sidewalk').length,
+                                flagsData.filter(f=>f.category==='infrastructure').length,
+                                flagsData.filter(f=>f.category==='safety').length,
+                                suggestedSafetyBuildings.length,
+                                suggestedShelters.length,
+                                suggestedFoodResources.length
+                            ],
+                            backgroundColor: ['#eab308', '#3b82f6', '#ef4444', '#a855f7', '#06b6d4', '#84cc16'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 10 } } } }
+                    }
+                });
+            }
+
+            const ctxNeigh = document.getElementById('neighborhoodChart');
+            if (ctxNeigh) {
+                if (neighborhoodChartInstance) neighborhoodChartInstance.destroy();
+                neighborhoodChartInstance = new Chart(ctxNeigh, {
+                    type: 'bar',
+                    data: {
+                        labels: ['West Baltimore', 'East Baltimore', 'Inner Harbor', 'Pigtown', 'Highlandtown'],
+                        datasets: [{
+                            label: 'Total Issues & Proposals',
+                            data: [9, 7, 6, 5, 3],
+                            backgroundColor: '#84cc16',
+                            borderRadius: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { display: false } },
+                            y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                        }
+                    }
+                });
+            }
+        }
+    </script>
+</body>
+</html>

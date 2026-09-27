@@ -1,0 +1,5 @@
+https://example.com
+http://login.phishingsite.com/account
+HTTPS://secure.bank.com
+http://malware-download.net/file
+http://mywebsite.com/hack-tools
