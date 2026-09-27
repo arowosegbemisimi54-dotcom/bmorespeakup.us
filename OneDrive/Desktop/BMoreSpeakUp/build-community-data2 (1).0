@@ -1,0 +1,417 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+const downloadsDir = 'C:\\Users\\dayol\\Downloads';
+const vacancyPath = path.join(downloadsDir, 'Vacant_Building_Notice_-_Open.geojson');
+const crimeCandidates = fs.readdirSync(downloadsDir)
+  .filter(name => name.startsWith('NIBRS_GroupA_Crime_Data_') && name.endsWith('.geojson.crdownload'))
+  .map(name => ({ name, path: path.join(downloadsDir, name), size: fs.statSync(path.join(downloadsDir, name)).size }))
+  .sort((a, b) => b.size - a.size);
+
+if (!crimeCandidates.length) throw new Error('No NIBRS GeoJSON download was found.');
+
+const crimeSource = crimeCandidates[0];
+const outputPath = path.resolve('outputs/data/community-data.js');
+const asOf = new Date('2026-09-26T23:59:59Z');
+const recentStart = new Date('2025-09-27T00:00:00Z');
+const previousStart = new Date('2024-09-27T00:00:00Z');
+
+const normalizeName = value => String(value || '')
+  .trim()
+  .toUpperCase()
+  .replace(/[^A-Z0-9]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const increment = (map, key, amount = 1) => map.set(key, (map.get(key) || 0) + amount);
+
+function topEntries(map, limit = 3) {
+  return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
+}
+
+function getNeighborhoodBucket(map, name) {
+  const key = normalizeName(name) || 'UNKNOWN';
+  if (!map.has(key)) {
+    map.set(key, {
+      key,
+      name: String(name || 'Unknown').trim(),
+      total: 0,
+      recent: 0,
+      previous: 0,
+      latSum: 0,
+      lngSum: 0,
+      coordinateCount: 0,
+      offenses: new Map()
+    });
+  }
+  return map.get(key);
+}
+
+async function streamGeoJsonFeatures(filePath, onFeature) {
+  const stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 });
+  let foundFeatures = false;
+  let seekBuffer = '';
+  let started = false;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let current = '';
+  let complete = 0;
+  let parseErrors = 0;
+
+  for await (const chunk of stream) {
+    let text = chunk;
+    if (!foundFeatures) {
+      seekBuffer += text;
+      const markerIndex = seekBuffer.indexOf('"features"');
+      if (markerIndex < 0) {
+        seekBuffer = seekBuffer.slice(-32);
+        continue;
+      }
+      const arrayIndex = seekBuffer.indexOf('[', markerIndex);
+      if (arrayIndex < 0) continue;
+      foundFeatures = true;
+      text = seekBuffer.slice(arrayIndex + 1);
+      seekBuffer = '';
+    }
+
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      if (!started) {
+        if (char === '{') {
+          started = true;
+          depth = 1;
+          current = '{';
+          inString = false;
+          escaped = false;
+        }
+        continue;
+      }
+
+      current += char;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+
+      if (char === '"') inString = true;
+      else if (char === '{') depth++;
+      else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          try {
+            onFeature(JSON.parse(current));
+            complete++;
+          } catch {
+            parseErrors++;
+          }
+          started = false;
+          current = '';
+        }
+      }
+    }
+  }
+
+  return { complete, parseErrors, truncated: started || !foundFeatures };
+}
+
+const crimeNeighborhoods = new Map();
+const crimeGrid = new Map();
+let minCrimeDate = null;
+let maxCrimeDate = null;
+let invalidCrimeGeometry = 0;
+let invalidCrimeDate = 0;
+
+const crimeParse = await streamGeoJsonFeatures(crimeSource.path, feature => {
+  const properties = feature.properties || {};
+  const coordinates = feature.geometry?.coordinates;
+  const lng = Number(coordinates?.[0]);
+  const lat = Number(coordinates?.[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    invalidCrimeGeometry++;
+    return;
+  }
+
+  const date = new Date(properties.CrimeDateTime);
+  if (Number.isNaN(date.getTime())) {
+    invalidCrimeDate++;
+    return;
+  }
+  if (!minCrimeDate || date < minCrimeDate) minCrimeDate = date;
+  if (!maxCrimeDate || date > maxCrimeDate) maxCrimeDate = date;
+
+  const neighborhood = String(properties.Neighborhood || 'Unknown').trim();
+  const offense = String(properties.Description || 'Unknown offense').trim();
+  const bucket = getNeighborhoodBucket(crimeNeighborhoods, neighborhood);
+  bucket.total++;
+  bucket.latSum += lat;
+  bucket.lngSum += lng;
+  bucket.coordinateCount++;
+  increment(bucket.offenses, offense);
+
+  let period = null;
+  if (date >= recentStart && date <= asOf) {
+    bucket.recent++;
+    period = 'recent';
+  } else if (date >= previousStart && date < recentStart) {
+    bucket.previous++;
+    period = 'previous';
+  }
+
+  if (period) {
+    const gridLat = Math.floor(lat / 0.008) * 0.008;
+    const gridLng = Math.floor(lng / 0.008) * 0.008;
+    const gridKey = `${gridLat.toFixed(3)},${gridLng.toFixed(3)}`;
+    if (!crimeGrid.has(gridKey)) {
+      crimeGrid.set(gridKey, {
+        recent: 0,
+        previous: 0,
+        latSum: 0,
+        lngSum: 0,
+        recentCoordinates: 0,
+        neighborhoods: new Map(),
+        offenses: new Map()
+      });
+    }
+    const grid = crimeGrid.get(gridKey);
+    grid[period]++;
+    increment(grid.neighborhoods, neighborhood);
+    increment(grid.offenses, offense);
+    if (period === 'recent') {
+      grid.latSum += lat;
+      grid.lngSum += lng;
+      grid.recentCoordinates++;
+    }
+  }
+});
+
+const vacancyGeoJson = JSON.parse(fs.readFileSync(vacancyPath, 'utf8'));
+const vacancyNeighborhoods = new Map();
+const vacantBuildings = [];
+
+for (const feature of vacancyGeoJson.features || []) {
+  const properties = feature.properties || {};
+  const coordinates = feature.geometry?.coordinates;
+  const lng = Number(coordinates?.[0]);
+  const lat = Number(coordinates?.[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+  const neighborhood = String(properties.Neighborhood || 'Unknown').trim();
+  const key = normalizeName(neighborhood) || 'UNKNOWN';
+  if (!vacancyNeighborhoods.has(key)) {
+    vacancyNeighborhoods.set(key, {
+      key,
+      name: neighborhood,
+      count: 0,
+      latSum: 0,
+      lngSum: 0,
+      typologies: new Map(),
+      oldest: null,
+      newest: null,
+      candidate: null
+    });
+  }
+  const bucket = vacancyNeighborhoods.get(key);
+  const noticeDate = new Date(properties.DateNotice);
+  bucket.count++;
+  bucket.latSum += lat;
+  bucket.lngSum += lng;
+  increment(bucket.typologies, String(properties.HousingMarketTypology2023 || 'NA'));
+  if (!Number.isNaN(noticeDate.getTime())) {
+    if (!bucket.oldest || noticeDate < bucket.oldest) bucket.oldest = noticeDate;
+    if (!bucket.newest || noticeDate > bucket.newest) bucket.newest = noticeDate;
+    if (!bucket.candidate || noticeDate < bucket.candidate.noticeDate) {
+      bucket.candidate = {
+        lat,
+        lng,
+        address: String(properties.Address || 'Address unavailable').trim(),
+        blockLot: String(properties.BLOCKLOT || '').trim(),
+        noticeNumber: String(properties.NoticeNum || '').trim(),
+        noticeDate
+      };
+    }
+  }
+
+  vacantBuildings.push({
+    id: `vacant-${properties.OBJECTID}`,
+    lat,
+    lng,
+    neighborhood,
+    address: String(properties.Address || 'Address unavailable').trim(),
+    blockLot: String(properties.BLOCKLOT || '').trim(),
+    noticeNumber: String(properties.NoticeNum || '').trim(),
+    noticeDate: String(properties.DateNotice || '').slice(0, 10),
+    marketTypology: String(properties.HousingMarketTypology2023 || 'NA'),
+    councilDistrict: properties.Council_District
+  });
+}
+
+const crimeHotspots = [...crimeGrid.entries()]
+  .filter(([, item]) => item.recentCoordinates > 0)
+  .sort((a, b) => b[1].recent - a[1].recent)
+  .slice(0, 16)
+  .map(([key, item], index) => {
+    const trendPercent = item.previous > 0
+      ? Math.round(((item.recent - item.previous) / item.previous) * 100)
+      : null;
+    return {
+      id: `crime-grid-${index + 1}`,
+      gridKey: key,
+      name: topEntries(item.neighborhoods, 1)[0]?.[0] || 'Baltimore area',
+      lat: item.latSum / item.recentCoordinates,
+      lng: item.lngSum / item.recentCoordinates,
+      radius: Math.min(650, 260 + Math.sqrt(item.recent) * 12),
+      recentCount: item.recent,
+      previousCount: item.previous,
+      trendPercent,
+      primaryTypes: topEntries(item.offenses, 3).map(([name]) => name),
+      source: 'Uploaded NIBRS Group A crime data'
+    };
+  });
+
+const neighborhoodSummary = [...new Set([
+  ...crimeNeighborhoods.keys(),
+  ...vacancyNeighborhoods.keys()
+])].map(key => {
+  const crime = crimeNeighborhoods.get(key);
+  const vacancy = vacancyNeighborhoods.get(key);
+  return {
+    key,
+    name: vacancy?.name || crime?.name || key,
+    recentCrime: crime?.recent || 0,
+    previousCrime: crime?.previous || 0,
+    totalCrimeRecords: crime?.total || 0,
+    vacantBuildings: vacancy?.count || 0,
+    lat: vacancy ? vacancy.latSum / vacancy.count : crime?.latSum / crime?.coordinateCount,
+    lng: vacancy ? vacancy.lngSum / vacancy.count : crime?.lngSum / crime?.coordinateCount,
+    topOffenses: crime ? topEntries(crime.offenses, 3).map(([name, count]) => ({ name, count })) : [],
+    marketTypologies: vacancy ? topEntries(vacancy.typologies, 3).map(([name, count]) => ({ name, count })) : [],
+    oldestNotice: vacancy?.oldest?.toISOString().slice(0, 10) || null,
+    candidate: vacancy?.candidate ? {
+      ...vacancy.candidate,
+      noticeDate: vacancy.candidate.noticeDate.toISOString().slice(0, 10)
+    } : null
+  };
+});
+
+const maxRecentCrime = Math.max(...neighborhoodSummary.map(item => item.recentCrime), 1);
+const maxVacancy = Math.max(...neighborhoodSummary.map(item => item.vacantBuildings), 1);
+for (const item of neighborhoodSummary) {
+  item.needScore = Math.round(((item.recentCrime / maxRecentCrime) * 55 + (item.vacantBuildings / maxVacancy) * 45) * 10) / 10;
+  item.trendPercent = item.previousCrime > 0
+    ? Math.round(((item.recentCrime - item.previousCrime) / item.previousCrime) * 100)
+    : null;
+}
+
+const facilityBlueprints = [
+  {
+    subtype: 'Youth Recreation & Community Safety Center',
+    costEstimate: 'Feasibility study required',
+    expectedImpact: 'Youth activities, mentoring, violence intervention and evening programs',
+    icon: 'fa-basketball'
+  },
+  {
+    subtype: 'Full-Service Supermarket & Food Cooperative',
+    costEstimate: 'Food-access and market study required',
+    expectedImpact: 'Fresh-food access, local jobs and nutrition services',
+    icon: 'fa-cart-shopping'
+  },
+  {
+    subtype: 'Workforce, Health & Social Services Center',
+    costEstimate: 'Building assessment required',
+    expectedImpact: 'Job training, health referrals and coordinated social services',
+    icon: 'fa-people-roof'
+  },
+  {
+    subtype: 'Green Space & Stormwater Pond Feasibility Site',
+    costEstimate: 'Hydrology and soil study required',
+    expectedImpact: 'Potential runoff reduction, habitat, shade and gathering space',
+    icon: 'fa-water'
+  },
+  {
+    subtype: 'Library, Arts & Community Activities Hub',
+    costEstimate: 'Adaptive-reuse study required',
+    expectedImpact: 'Learning, arts, technology access and community events',
+    icon: 'fa-book-open-reader'
+  },
+  {
+    subtype: 'Neighborhood Wellness & Accessible Recreation Center',
+    costEstimate: 'Accessibility and rehabilitation study required',
+    expectedImpact: 'Fitness, senior programs, family activities and public-health outreach',
+    icon: 'fa-heart-pulse'
+  }
+];
+
+const proposals = neighborhoodSummary
+  .filter(item => item.candidate && item.recentCrime > 0 && item.vacantBuildings > 0)
+  .sort((a, b) => b.needScore - a.needScore)
+  .slice(0, facilityBlueprints.length)
+  .map((item, index) => {
+    const blueprint = facilityBlueprints[index];
+    return {
+      id: `actual-proposal-${index + 1}`,
+      lat: item.candidate.lat,
+      lng: item.candidate.lng,
+      neighborhood: item.name,
+      category: 'community_upgrade',
+      subtype: blueprint.subtype,
+      severity: item.needScore >= 70 ? 'Critical' : item.needScore >= 45 ? 'High' : 'Medium',
+      status: 'Screening Candidate',
+      source: 'Uploaded vacant-building and partial NIBRS datasets',
+      costEstimate: blueprint.costEstimate,
+      expectedImpact: blueprint.expectedImpact,
+      conditionRating: `${item.vacantBuildings.toLocaleString()} open vacant-building notices`,
+      needSignal: `${item.recentCrime.toLocaleString()} recent crime records; ${item.trendPercent == null ? 'trend unavailable' : `${item.trendPercent >= 0 ? '+' : ''}${item.trendPercent}% versus prior period`}`,
+      description: `Candidate reuse screening at ${item.candidate.address} (Block/Lot ${item.candidate.blockLot}). This pin is based on uploaded vacancy and crime concentrations; ownership, zoning, structure, food access, drainage and community approval remain to be verified.`,
+      date: '2026-09-26',
+      upvotes: 0,
+      address: item.candidate.address,
+      blockLot: item.candidate.blockLot,
+      noticeNumber: item.candidate.noticeNumber,
+      noticeDate: item.candidate.noticeDate,
+      needScore: item.needScore,
+      icon: blueprint.icon
+    };
+  });
+
+const payload = {
+  metadata: {
+    generatedAt: new Date().toISOString(),
+    vacancySource: path.basename(vacancyPath),
+    vacancyRecords: vacantBuildings.length,
+    crimeSource: crimeSource.name,
+    crimeSourceBytes: crimeSource.size,
+    crimeRecordsParsed: crimeParse.complete,
+    crimeDownloadIncomplete: crimeParse.truncated,
+    crimeParseErrors: crimeParse.parseErrors,
+    invalidCrimeGeometry,
+    invalidCrimeDate,
+    crimeDateRange: {
+      start: minCrimeDate?.toISOString() || null,
+      end: maxCrimeDate?.toISOString() || null
+    },
+    comparisonPeriods: {
+      recent: ['2025-09-27', '2026-09-26'],
+      previous: ['2024-09-27', '2025-09-26']
+    },
+    methodology: 'Crime hotspots use 0.008-degree grid aggregation. Community candidates rank neighborhood concentrations of recent NIBRS records and open vacant-building notices; scores are screening indicators, not population-adjusted rates or site approvals.'
+  },
+  crimeHotspots,
+  vacantBuildings,
+  neighborhoodSummary: neighborhoodSummary.sort((a, b) => b.needScore - a.needScore),
+  proposals
+};
+
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+fs.writeFileSync(outputPath, `window.communityData = ${JSON.stringify(payload)};\n`, 'utf8');
+
+console.log(JSON.stringify({
+  outputPath,
+  outputBytes: fs.statSync(outputPath).size,
+  metadata: payload.metadata,
+  hotspotCount: crimeHotspots.length,
+  proposalCount: proposals.length,
+  topProposals: proposals.map(item => ({ neighborhood: item.neighborhood, type: item.subtype, needScore: item.needScore }))
+}, null, 2));
